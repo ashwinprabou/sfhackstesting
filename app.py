@@ -77,16 +77,20 @@ def extract_generic_info(raw_info: str) -> dict:
     effects_list = [effect.strip() for effect in effects_list if effect.strip()]
     side_effects = ", ".join(effects_list)
     
+    # Extract usage/effects information
+    usage = data.get("usage", data.get("uses", data.get("effects", "Not found")))
+    
     return {
         "manufacturer": manufacturer,
         "ingredient": ingredient,
         "price": price,
         "dosage": dosage,
-        "side_effects": side_effects
+        "side_effects": side_effects,
+        "usage": usage
     }
 
 
-def extract_retailer_info(raw_info: str) -> dict:
+def extract_retailer_info(raw_info: str, retailer_name: str) -> dict:
     """
     Extracts retailer metadata from the generic drug record.
     Expected format: variable key-value pairs that may include retailer and price info.
@@ -97,16 +101,21 @@ def extract_retailer_info(raw_info: str) -> dict:
             key, value = field.split(":", 1)
             data[key.strip().lower()] = value.strip()
     
-    retailer = data.get("retailer", "Unknown")
+    # Use the provided retailer name if not found in the data
+    retailer = data.get("retailer", retailer_name.capitalize())
     
+    # Extract price information
     price_field = data.get("price", "Not found")
-    m = re.search(r"(\$\d+\.\d+).*?(for\s+.+)", price_field, re.IGNORECASE)
-    if m:
-        price = m.group(1).strip()
-        quantity = m.group(2).strip()
+    price_match = re.search(r"(\$\d+\.?\d*)", price_field)
+    price = price_match.group(1) if price_match else "Price not available"
+    
+    # Extract quantity/dosage information
+    quantity = ""
+    quantity_match = re.search(r"for\s+(.+)", price_field, re.IGNORECASE)
+    if quantity_match:
+        quantity = quantity_match.group(1).strip()
     else:
-        price = price_field
-        quantity = data.get("quantity", "")
+        quantity = data.get("quantity", data.get("dosage", ""))
     
     return {
         "retailer": retailer,
@@ -203,10 +212,27 @@ def search():
     possible_ingredients = get_possible_ingredients(active_ing)
     logger.info(f"Trying possible ingredient variations: {possible_ingredients}")
     
-    # Generate a combined generic summary from retailer data
-    retailer_list = ["walgreens", "cvs", "walmart", "costco", "riteaid", "target"]
+    # First try to find a generic summary record
+    generic_info = None
+    generic_records = {}
+    
+    # Try to find a generic summary first if it exists
+    for ingredient_variant in possible_ingredients:
+        summary_id = f"{ingredient_variant}:generic"
+        try:
+            summary_fetch = index.fetch(ids=[summary_id], namespace="generic_drug")
+            if summary_id in summary_fetch.get('vectors', {}):
+                generic_raw = summary_fetch['vectors'][summary_id]['metadata'].get("text", "")
+                logger.info(f"Found generic summary: {generic_raw[:100]}...")
+                generic_info = extract_generic_info(generic_raw)
+                break
+        except Exception as e:
+            logger.error(f"Error fetching generic summary for {summary_id}: {e}")
+    
+    # Try to fetch retailer-specific information
+    retailer_list = ["walgreens", "cvs", "walmart", "amazon", "costplus", "goodrx", "riteaid", "blink"]
     retailer_info_list = []
-    generic_info_found = False
+    retailer_records_found = False
     
     for ingredient_variant in possible_ingredients:
         for retailer in retailer_list:
@@ -218,23 +244,39 @@ def search():
                 
                 if rec_id in rec_fetch.get('vectors', {}):
                     rec_raw = rec_fetch['vectors'][rec_id]['metadata'].get("text", "")
-                    logger.info(f"Found generic drug info for {retailer}: {rec_raw[:100]}...")  # Log first 100 chars
+                    logger.info(f"Found generic drug info for {retailer}: {rec_raw[:100]}...")
                     
-                    # Extract retailer info directly instead of using Gemini
-                    retailer_data = extract_retailer_info(rec_raw)
+                    # Store the raw record
+                    generic_records[retailer] = rec_raw
+                    
+                    # Extract retailer info directly
+                    retailer_data = extract_retailer_info(rec_raw, retailer)
                     formatted_info = f"Retailer: {retailer_data['retailer']}; Price: {retailer_data['price']} for {retailer_data['quantity']}"
                     retailer_info_list.append(formatted_info)
-                    generic_info_found = True
+                    retailer_records_found = True
+                    
+                    # If we don't have generic info yet, try to extract it from this record
+                    if generic_info is None:
+                        generic_info = extract_generic_info(rec_raw)
             except Exception as e:
                 logger.error(f"Error fetching generic drug data for {rec_id}: {e}")
     
-    # Create a generic summary from the collected retailer data
-    if generic_info_found:
+    # Create a generic summary focusing on effects/usage information
+    if generic_info:
         generic_summary_str = (
             f"Ingredient: {active_ing}\n"
-            f"Available at: {', '.join(set([info.split(';')[0].replace('Retailer:', '').strip() for info in retailer_info_list if 'Retailer:' in info]))}\n"
-            f"Price range: {min([info.split(';')[1].replace('Price:', '').strip().split(' for')[0] for info in retailer_info_list if 'Price:' in info] or ['N/A'])} - "
-            f"{max([info.split(';')[1].replace('Price:', '').strip().split(' for')[0] for info in retailer_info_list if 'Price:' in info] or ['N/A'])}"
+            f"Usage: {generic_info.get('usage', 'Not specified')}\n"
+            f"Side Effects: {generic_info.get('side_effects', 'Not specified')}"
+        )
+    elif retailer_records_found:
+        # If we have retailer records but no generic summary, try to extract info from the first retailer record
+        first_retailer = next(iter(generic_records))
+        temp_info = extract_generic_info(generic_records[first_retailer])
+        generic_summary_str = (
+            f"Manufacturer: Various manufacturers\n"
+            f"Ingredient: {active_ing}\n"
+            f"Usage: {temp_info.get('usage', 'Not specified')}\n"
+            f"Side Effects: {temp_info.get('side_effects', 'Not specified')}"
         )
     else:
         generic_summary_str = "Generic alternative info not available"
@@ -252,22 +294,18 @@ def search():
 def list_records():
     """
     Debug endpoint to list available records in the database.
-    Use with caution as this may expose sensitive data.
     """
     try:
         # Get query parameters
         namespace = request.args.get('namespace', 'brand_drug')
-        limit = int(request.args.get('limit', 10))
+        prefix = request.args.get('prefix', '')
         
-        # List vectors in the namespace (will depend on Pinecone API capabilities)
-        # Note: This is a simplified approach and might need adaptation based on Pinecone's API
-        # In a real implementation, you would use pagination and proper filtering
-        
-        # This is just a placeholder - actual implementation depends on your Pinecone version
-        # For newer Pinecone versions, you might need to use a query with a dummy vector
+        # For debugging - list some records that match a prefix if possible
+        # This is a placeholder and depends on your Pinecone version's capabilities
         result = {
             "message": f"Debug endpoint to list records in {namespace} namespace",
-            "note": "This endpoint needs to be implemented based on your Pinecone version's API"
+            "search_prefix": prefix,
+            "note": "Use this endpoint to explore what records exist in your database"
         }
         
         return jsonify(result)
@@ -275,6 +313,39 @@ def list_records():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/debug/direct_fetch', methods=['GET'])
+def direct_fetch():
+    """
+    Debug endpoint to directly fetch a specific record by ID.
+    """
+    try:
+        record_id = request.args.get('id')
+        namespace = request.args.get('namespace', 'generic_drug')
+        
+        if not record_id:
+            return jsonify({"error": "No ID provided"}), 400
+            
+        fetch_result = index.fetch(ids=[record_id], namespace=namespace)
+        
+        if record_id in fetch_result.get('vectors', {}):
+            record_data = fetch_result['vectors'][record_id]['metadata'].get("text", "No data available")
+            return jsonify({
+                "id": record_id,
+                "namespace": namespace,
+                "found": True,
+                "data": record_data
+            })
+        else:
+            return jsonify({
+                "id": record_id,
+                "namespace": namespace,
+                "found": False,
+                "message": "Record not found"
+            })
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True)
-    

@@ -1,0 +1,15 @@
+{
+  "name": "frontend",
+  "version": "1.0.0",
+  "description": "Frontend for biotech drug info search",
+  "main": "app.js",
+  "scripts": {
+    "build": "tsc"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/retry": "^0.12.5",
+    "typescript": "^4.0.0"
+  }
+}

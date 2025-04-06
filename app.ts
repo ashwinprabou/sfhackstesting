@@ -1,3 +1,4 @@
+// app.ts
 const searchBtn = document.getElementById("searchBtn") as HTMLButtonElement;
 const searchInput = document.getElementById("searchInput") as HTMLInputElement;
 const resultDiv = document.getElementById("result") as HTMLDivElement;
@@ -24,12 +25,30 @@ searchBtn.addEventListener("click", async () => {
     }
 
     const data = await response.json();
+    // Create the layout:
+    // Top row: two side-by-side boxes for brand_info (left) and generic_summary (right)
+    // Below: a row of boxes for retailer_info
+
     resultDiv.innerHTML = `
-             <h2>Generic Info for ${data.brand_drug}</h2>
-             <p>${data.generic_info}</p>
-             <h3>Raw Info</h3>
-             <p>${data.raw_info}</p>
-         `;
+            <div class="top-row">
+                <div id="brand-box" class="box">
+                    <h2>Brand Info</h2>
+                    <pre>${data.brand_info}</pre>
+                </div>
+                <div id="generic-box" class="box">
+                    <h2>Generic Summary</h2>
+                    <pre>${data.generic_summary}</pre>
+                </div>
+            </div>
+            <div id="retailer-row" class="row">
+                ${data.retailer_info
+                  .map(
+                    (info: string) =>
+                      `<div class="retailer-box box"><pre>${info}</pre></div>`
+                  )
+                  .join("")}
+            </div>
+        `;
   } catch (error) {
     console.error("Error:", error);
     resultDiv.innerText = "An error occurred.";

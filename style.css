@@ -3,25 +3,40 @@ body {
 }
 
 .container {
-  width: 600px;
-  margin: 0 auto;
+  width: 80%;
+  margin: auto;
   text-align: center;
 }
 
-input[type="text"] {
-  width: 70%;
+.top-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.box {
+  border: 1px solid #ccc;
+  padding: 15px;
+  width: 48%;
+  background-color: #f9f9f9;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.row {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+}
+
+.retailer-box {
+  border: 1px solid #aaa;
   padding: 10px;
-  margin: 20px 0;
-  font-size: 16px;
+  margin: 5px;
+  width: 30%;
+  background-color: #fff;
+  box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.1);
 }
-
-button {
-  padding: 10px 20px;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-#result {
-  margin-top: 20px;
+pre {
   text-align: left;
+  white-space: pre-wrap;
 }
